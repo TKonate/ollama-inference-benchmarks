@@ -1,0 +1,6 @@
+model,observed_time_seconds,observed_ram_gib,qualitative_result,source_type
+Qwen3 1.7B,73,"1.9-2.9",Best overall compromise observed,historical observation
+Llama 3.2 1B,57-71,"1.5-4.0",Faster but technically unreliable answers,historical observation
+Gemma 3 1B,75-91,"1.0-3.5",Quality did not justify the gain,historical observation
+SmolLM2 1.7B,255,3.5,Too slow and low-quality output,historical observation
+qwen3:1.7b,81.00,,Successful live run; response quality not formally scored,live run 2026-08-29
