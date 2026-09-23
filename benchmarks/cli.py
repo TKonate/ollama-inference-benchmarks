@@ -179,26 +179,30 @@ def _append_csv(result) -> None:
     with open(RESULTS_CSV, "a", newline="") as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow([
-                "model",
-                "elapsed_seconds",
-                "tokens_per_second",
-                "peak_memory_mib",
-                "prompt_tokens",
-                "completion_tokens",
-                "prompt",
-                "source_type",
-            ])
-        writer.writerow([
-            result.model,
-            result.elapsed_seconds,
-            result.tokens_per_second or "",
-            result.peak_memory_mib or "",
-            result.prompt_tokens or "",
-            result.completion_tokens or "",
-            result.prompt[:100],
-            f"live run {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
-        ])
+            writer.writerow(
+                [
+                    "model",
+                    "elapsed_seconds",
+                    "tokens_per_second",
+                    "peak_memory_mib",
+                    "prompt_tokens",
+                    "completion_tokens",
+                    "prompt",
+                    "source_type",
+                ]
+            )
+        writer.writerow(
+            [
+                result.model,
+                result.elapsed_seconds,
+                result.tokens_per_second or "",
+                result.peak_memory_mib or "",
+                result.prompt_tokens or "",
+                result.completion_tokens or "",
+                result.prompt[:100],
+                f"live run {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+            ]
+        )
 
     console.print(f"[dim]✓ Saved to {RESULTS_CSV}[/dim]")
 

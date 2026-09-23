@@ -28,11 +28,13 @@ class OllamaClient:
     def generate(self, request: BenchmarkRequest) -> BenchmarkResult:
         """Send a generate request and return a BenchmarkResult."""
         url = f"{self.base_url}/api/generate"
-        payload = json.dumps({
-            "model": request.model,
-            "prompt": request.prompt,
-            "stream": request.stream,
-        }).encode()
+        payload = json.dumps(
+            {
+                "model": request.model,
+                "prompt": request.prompt,
+                "stream": request.stream,
+            }
+        ).encode()
 
         http_request = urllib.request.Request(
             url,

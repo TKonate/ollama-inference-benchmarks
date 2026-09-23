@@ -42,8 +42,10 @@ class TestOllamaClient:
             # json.load is called inside urlopen's context
             return mock_resp
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen), \
-             patch("benchmarks.client.json.load", return_value=ollama_response):
+        with (
+            patch("urllib.request.urlopen", side_effect=fake_urlopen),
+            patch("benchmarks.client.json.load", return_value=ollama_response),
+        ):
             result = client.generate(request)
 
         assert result.success is True
