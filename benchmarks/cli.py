@@ -121,8 +121,8 @@ def compare(
         tracker.start()
         req = BenchmarkRequest(model=model_name, prompt=prompt, base_url=url)
         result = client.generate(req)
-        mem = tracker.stop()
-        result.peak_memory_mib = mem.rss_mib
+        mem_snapshot = tracker.stop()
+        result.peak_memory_mib = mem_snapshot.rss_mib
         results.append(result)
 
     # Summary table
@@ -136,8 +136,8 @@ def compare(
     for r in results:
         status = "[green]✓[/green]" if r.success else "[red]✗[/red]"
         tps = f"{r.tokens_per_second}" if r.tokens_per_second else "—"
-        mem = f"{r.peak_memory_mib}" if r.peak_memory_mib else "—"
-        table.add_row(r.model, f"{r.elapsed_seconds:.1f}", tps, mem, status)
+        mem_str = f"{r.peak_memory_mib}" if r.peak_memory_mib else "—"
+        table.add_row(r.model, f"{r.elapsed_seconds:.1f}", tps, mem_str, status)
 
     console.print(table)
 

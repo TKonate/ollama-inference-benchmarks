@@ -87,6 +87,7 @@ class OllamaClient:
         try:
             req = urllib.request.Request(f"{self.base_url}/api/tags")
             with urllib.request.urlopen(req, timeout=5) as resp:
-                return resp.status == 200
+                status: int = resp.status
+                return status == 200
         except Exception:
             return False
