@@ -25,6 +25,17 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
+    def list_models(self) -> list[str]:
+        """Return the tags Ollama advertises locally."""
+        try:
+            req = urllib.request.Request(f"{self.base_url}/api/tags")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data: dict[str, Any] = json.load(resp)
+            return [str(m["name"]) for m in data.get("models", [])]
+        except Exception as exc:
+            logger.warning("Failed to list models from %s: %s", self.base_url, exc)
+            return []
+
     def generate(self, request: BenchmarkRequest) -> BenchmarkResult:
         """Send a generate request and return a BenchmarkResult."""
         url = f"{self.base_url}/api/generate"

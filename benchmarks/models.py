@@ -11,7 +11,8 @@ class BackendType(str, Enum):
     """Supported inference backends."""
 
     OLLAMA = "ollama"
-    LLAMACPP = "llamacpp"  # reserved for future use
+    LLAMACPP = "llamacpp"  # llama.cpp llama-server (OpenAI-compatible API)
+    VLLM = "vllm"  # vLLM in OpenAI-compatible mode
 
 
 class BenchmarkRequest(BaseModel):
