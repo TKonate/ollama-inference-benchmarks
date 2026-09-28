@@ -24,10 +24,16 @@ pip install -e ".[dev]"
 # Or, with uv
 uv sync --extra dev
 
-# Run a single benchmark
+# Run a single benchmark (cold latency)
 bench run --model qwen3:1.7b --prompt "Explain Docker in five sentences."
 
-# Compare every locally available model on the same prompt
+# Repeat runs to measure cold vs. warm latency (first run cold, rest warm)
+bench run --model qwen3:1.7b --prompt "Explain Docker in five sentences." --runs 3
+
+# Benchmark against another backend (llama.cpp / vLLM, OpenAI-compatible API)
+bench run --model qwen3:1.7b --prompt "Hello" --backend llamacpp --url http://127.0.0.1:8080
+
+# Compare every model available on the backend with the same prompt
 bench compare
 
 # Run the standardized prompt suite (summarization, classification, code generation)
@@ -90,8 +96,8 @@ Full details in [`docs/methodology.md`](docs/methodology.md).
 - [x] **GitHub Actions CI** — automated lint, type checking (mypy strict) and tests
 - [x] **Docker setup** — reproducible benchmark environment with the CLI bundled
 - [x] **Benchmark suite** — standardized prompt set covering summarization, classification, code generation
-- [ ] **Multi-backend support** — llama.cpp, vLLM (CPU mode) alongside Ollama
-- [ ] **Cold vs. warm latency** — per IETF §4.5.1 recommendations
+- [x] **Multi-backend support** — llama.cpp and vLLM (CPU mode) via an OpenAI-compatible API alongside Ollama
+- [x] **Cold vs. warm latency** — first run is cold, warm median reported (per IETF §4.5.1)
 
 ## Project structure
 

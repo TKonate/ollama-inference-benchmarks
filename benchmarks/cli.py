@@ -1,4 +1,4 @@
-"""Typer CLI for running inference benchmarks against Ollama."""
+"""Typer CLI for running inference benchmarks against supported backends."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from benchmarks.client import OllamaClient
+from benchmarks.analysis import summarize_cold_warm
+from benchmarks.clients import get_client
 from benchmarks.metrics import MemoryTracker, get_system_info
-from benchmarks.models import BenchmarkRequest, BenchmarkResult
+from benchmarks.models import BackendType, BenchmarkRequest, BenchmarkResult
 from benchmarks.suite import CATEGORY_DESCRIPTIONS, SUITE
 
 app = typer.Typer(
@@ -29,49 +30,77 @@ RESULTS_CSV = DATA_DIR / "results.csv"
 
 @app.command()
 def run(
-    model: str = typer.Option(..., help="Ollama model tag (e.g. 'qwen3:1.7b')"),
+    model: str = typer.Option(..., help="Model tag (e.g. 'qwen3:1.7b')"),
     prompt: str = typer.Option(..., help="Benchmark prompt to send"),
-    url: str = typer.Option("http://127.0.0.1:11434", help="Ollama API base URL"),
+    url: str = typer.Option("http://127.0.0.1:11434", help="API base URL"),
+    backend: BackendType = typer.Option(
+        BackendType.OLLAMA, help="Inference backend (ollama, llamacpp, vllm)"
+    ),
+    runs: int = typer.Option(1, min=1, help="Number of runs; the first is cold, the rest are warm"),
     timeout: int = typer.Option(600, help="Request timeout in seconds"),
     track_memory: bool = typer.Option(True, help="Track peak RSS memory during run"),
     save: bool = typer.Option(True, help="Append result to data/results.csv"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
 ) -> None:
-    """Run a single inference benchmark."""
+    """Run an inference benchmark, optionally measuring cold vs. warm latency."""
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    client = OllamaClient(base_url=url, timeout=timeout)
+    client = get_client(backend, url, timeout)
 
     # Health check
     if not client.health_check():
-        console.print(f"[red]✗ Cannot reach Ollama at {url}[/red]")
+        console.print(f"[red]✗ Cannot reach {backend.value} at {url}[/red]")
         raise typer.Exit(code=1)
 
+    console.print(f"[dim]Backend: {backend.value}[/dim]")
     console.print(f"[dim]Model: {model}[/dim]")
     console.print(f"[dim]Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}[/dim]")
     console.print()
 
-    # Memory tracking
-    tracker = MemoryTracker() if track_memory else None
-    if tracker is not None:
-        tracker.start()
+    results: list[BenchmarkResult] = []
+    for run_index in range(runs):
+        label = "cold" if run_index == 0 else "warm"
 
-    request = BenchmarkRequest(model=model, prompt=prompt, base_url=url, timeout=timeout)
-    result = client.generate(request)
+        # Memory tracking
+        tracker = MemoryTracker() if track_memory else None
+        if tracker is not None:
+            tracker.start()
 
-    if tracker is not None:
-        mem_snapshot = tracker.stop()
-        result.peak_memory_mib = mem_snapshot.rss_mib
+        request = BenchmarkRequest(
+            model=model,
+            prompt=prompt,
+            backend=backend,
+            base_url=url,
+            timeout=timeout,
+        )
+        result = client.generate(request)
 
-    # Display results
-    _display_result(result)
+        if tracker is not None:
+            mem_snapshot = tracker.stop()
+            result.peak_memory_mib = mem_snapshot.rss_mib
 
-    # Save to CSV
-    if save and result.success:
-        _append_csv(result)
+        results.append(result)
+        status = "[green]✓[/green]" if result.success else "[red]✗[/red]"
+        console.print(f"  {status} {label:4s} run  {result.elapsed_seconds:6.2f}s")
+
+        # Save to CSV
+        if save and result.success:
+            _append_csv(result, source_label=f"{label} run")
+
+    if runs > 1:
+        stats = summarize_cold_warm(results)
+        cold_s = f"{stats.cold_seconds:.2f}s" if stats.cold_seconds else "—"
+        warm_s = f"{stats.warm_seconds:.2f}s" if stats.warm_seconds else "—"
+        console.print()
+        console.print(
+            f"[bold]Cold:[/bold] {cold_s}   "
+            f"[bold]Warm (median of {stats.warm_runs}):[/bold] {warm_s}"
+        )
+        if stats.warm_over_cold and stats.warm_over_cold < 1:
+            console.print(f"[dim]warm = {stats.warm_over_cold:.0%} of cold latency[/dim]")
 
 
 @app.command()
@@ -90,26 +119,18 @@ def info() -> None:
 
 @app.command()
 def compare(
-    url: str = typer.Option("http://127.0.0.1:11434", help="Ollama API base URL"),
+    url: str = typer.Option("http://127.0.0.1:11434", help="API base URL"),
+    backend: BackendType = typer.Option(
+        BackendType.OLLAMA, help="Inference backend (ollama, llamacpp, vllm)"
+    ),
     prompt: str = typer.Option("Explain Docker in five sentences.", help="Shared prompt"),
 ) -> None:
-    """Compare all locally available models on the same prompt."""
-    client = OllamaClient(base_url=url)
-
-    # Fetch available models
-    import json
-    import urllib.request
-
-    try:
-        with urllib.request.urlopen(f"{url}/api/tags", timeout=5) as resp:
-            data = json.load(resp)
-        models = [m["name"] for m in data.get("models", [])]
-    except Exception as exc:
-        console.print(f"[red]✗ Failed to list models: {exc}[/red]")
-        raise typer.Exit(code=1) from exc
+    """Compare all models available on the backend with the same prompt."""
+    client = get_client(backend, url)
+    models = client.list_models()
 
     if not models:
-        console.print("[yellow]No models found locally.[/yellow]")
+        console.print("[yellow]No models found on the backend.[/yellow]")
         raise typer.Exit()
 
     console.print(f"[dim]Found {len(models)} models: {', '.join(models)}[/dim]")
@@ -120,7 +141,12 @@ def compare(
         console.print(f"[bold]→ Benchmarking {model_name}...[/bold]")
         tracker = MemoryTracker()
         tracker.start()
-        req = BenchmarkRequest(model=model_name, prompt=prompt, base_url=url)
+        req = BenchmarkRequest(
+            model=model_name,
+            prompt=prompt,
+            backend=backend,
+            base_url=url,
+        )
         result = client.generate(req)
         mem_snapshot = tracker.stop()
         result.peak_memory_mib = mem_snapshot.rss_mib
@@ -145,8 +171,11 @@ def compare(
 
 @app.command()
 def suite(
-    model: str = typer.Option(..., help="Ollama model tag (e.g. 'qwen3:1.7b')"),
-    url: str = typer.Option("http://127.0.0.1:11434", help="Ollama API base URL"),
+    model: str = typer.Option(..., help="Model tag (e.g. 'qwen3:1.7b')"),
+    url: str = typer.Option("http://127.0.0.1:11434", help="API base URL"),
+    backend: BackendType = typer.Option(
+        BackendType.OLLAMA, help="Inference backend (ollama, llamacpp, vllm)"
+    ),
     timeout: int = typer.Option(600, help="Request timeout in seconds"),
     save: bool = typer.Option(True, help="Append results to data/results.csv"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
@@ -157,11 +186,11 @@ def suite(
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    client = OllamaClient(base_url=url, timeout=timeout)
+    client = get_client(backend, url, timeout)
 
     # Health check
     if not client.health_check():
-        console.print(f"[red]✗ Cannot reach Ollama at {url}[/red]")
+        console.print(f"[red]✗ Cannot reach {backend.value} at {url}[/red]")
         raise typer.Exit(code=1)
 
     total_prompts = sum(len(prompts) for prompts in SUITE.values())
@@ -174,7 +203,13 @@ def suite(
         for prompt in prompts:
             tracker = MemoryTracker()
             tracker.start()
-            request = BenchmarkRequest(model=model, prompt=prompt, base_url=url, timeout=timeout)
+            request = BenchmarkRequest(
+                model=model,
+                prompt=prompt,
+                backend=backend,
+                base_url=url,
+                timeout=timeout,
+            )
             result = client.generate(request)
             mem_snapshot = tracker.stop()
             result.peak_memory_mib = mem_snapshot.rss_mib
@@ -187,7 +222,7 @@ def suite(
                 preview += "..."
             console.print(f"  {status} {result.elapsed_seconds:6.1f}s  {tps:>7} tok/s  {preview}")
             if save and result.success:
-                _append_csv(result, silent=True)
+                _append_csv(result, silent=True, source_label="suite prompt")
         console.print()
 
     failures = [r for r in results if not r.success]
@@ -196,39 +231,15 @@ def suite(
         raise typer.Exit(code=1)
 
 
-def _display_result(result: BenchmarkResult) -> None:
-    """Pretty-print a single benchmark result."""
-    if not result.success:
-        console.print(f"[red]✗ Failed: {result.error}[/red]")
-        return
-
-    table = Table(show_header=False, box=None, padding=(0, 2))
-    table.add_column("Key", style="cyan", width=18)
-    table.add_column("Value", style="green")
-
-    table.add_row("Model", result.model)
-    table.add_row("Elapsed", f"{result.elapsed_seconds:.2f}s")
-    if result.tokens_per_second:
-        table.add_row("Tokens/s", str(result.tokens_per_second))
-    if result.peak_memory_mib:
-        table.add_row("Peak RAM", f"{result.peak_memory_mib} MiB")
-    if result.prompt_tokens:
-        table.add_row("Prompt tokens", str(result.prompt_tokens))
-    if result.completion_tokens:
-        table.add_row("Completion tokens", str(result.completion_tokens))
-
-    console.print(table)
-    console.print()
-    if result.response_text:
-        preview = result.response_text[:200]
-        suffix = "..." if len(result.response_text) > 200 else ""
-        console.print(f"[dim]{preview}{suffix}[/dim]")
-
-
-def _append_csv(result: BenchmarkResult, *, silent: bool = False) -> None:
+def _append_csv(
+    result: BenchmarkResult, *, silent: bool = False, source_label: str | None = None
+) -> None:
     """Append a benchmark result to the CSV file."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     write_header = not RESULTS_CSV.exists() or RESULTS_CSV.stat().st_size == 0
+
+    if source_label is None:
+        source_label = f"live run {datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
 
     with open(RESULTS_CSV, "a", newline="") as f:
         writer = csv.writer(f)
@@ -254,7 +265,7 @@ def _append_csv(result: BenchmarkResult, *, silent: bool = False) -> None:
                 result.prompt_tokens or "",
                 result.completion_tokens or "",
                 result.prompt[:100],
-                f"live run {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
+                source_label,
             ]
         )
 
