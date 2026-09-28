@@ -14,6 +14,7 @@ from rich.table import Table
 from benchmarks.client import OllamaClient
 from benchmarks.metrics import MemoryTracker, get_system_info
 from benchmarks.models import BenchmarkRequest, BenchmarkResult
+from benchmarks.suite import CATEGORY_DESCRIPTIONS, SUITE
 
 app = typer.Typer(
     name="bench",
@@ -142,6 +143,59 @@ def compare(
     console.print(table)
 
 
+@app.command()
+def suite(
+    model: str = typer.Option(..., help="Ollama model tag (e.g. 'qwen3:1.7b')"),
+    url: str = typer.Option("http://127.0.0.1:11434", help="Ollama API base URL"),
+    timeout: int = typer.Option(600, help="Request timeout in seconds"),
+    save: bool = typer.Option(True, help="Append results to data/results.csv"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
+) -> None:
+    """Run the standardized prompt suite against a single model."""
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.WARNING)
+
+    client = OllamaClient(base_url=url, timeout=timeout)
+
+    # Health check
+    if not client.health_check():
+        console.print(f"[red]✗ Cannot reach Ollama at {url}[/red]")
+        raise typer.Exit(code=1)
+
+    total_prompts = sum(len(prompts) for prompts in SUITE.values())
+    console.print(f"[bold]{model}[/bold] — {total_prompts} prompts across {len(SUITE)} categories")
+    console.print()
+
+    results: list[BenchmarkResult] = []
+    for category, prompts in SUITE.items():
+        console.print(f"[bold cyan]{category}[/bold cyan] — {CATEGORY_DESCRIPTIONS[category]}")
+        for prompt in prompts:
+            tracker = MemoryTracker()
+            tracker.start()
+            request = BenchmarkRequest(model=model, prompt=prompt, base_url=url, timeout=timeout)
+            result = client.generate(request)
+            mem_snapshot = tracker.stop()
+            result.peak_memory_mib = mem_snapshot.rss_mib
+            results.append(result)
+
+            status = "[green]✓[/green]" if result.success else "[red]✗[/red]"
+            tps = f"{result.tokens_per_second}" if result.tokens_per_second else "—"
+            preview = prompt[:60].replace("\n", " ")
+            if len(prompt) > 60:
+                preview += "..."
+            console.print(f"  {status} {result.elapsed_seconds:6.1f}s  {tps:>7} tok/s  {preview}")
+            if save and result.success:
+                _append_csv(result, silent=True)
+        console.print()
+
+    failures = [r for r in results if not r.success]
+    if failures:
+        console.print(f"[yellow]{len(failures)}/{len(results)} prompts failed.[/yellow]")
+        raise typer.Exit(code=1)
+
+
 def _display_result(result: BenchmarkResult) -> None:
     """Pretty-print a single benchmark result."""
     if not result.success:
@@ -171,7 +225,7 @@ def _display_result(result: BenchmarkResult) -> None:
         console.print(f"[dim]{preview}{suffix}[/dim]")
 
 
-def _append_csv(result: BenchmarkResult) -> None:
+def _append_csv(result: BenchmarkResult, *, silent: bool = False) -> None:
     """Append a benchmark result to the CSV file."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     write_header = not RESULTS_CSV.exists() or RESULTS_CSV.stat().st_size == 0
@@ -204,7 +258,8 @@ def _append_csv(result: BenchmarkResult) -> None:
             ]
         )
 
-    console.print(f"[dim]✓ Saved to {RESULTS_CSV}[/dim]")
+    if not silent:
+        console.print(f"[dim]✓ Saved to {RESULTS_CSV}[/dim]")
 
 
 if __name__ == "__main__":
