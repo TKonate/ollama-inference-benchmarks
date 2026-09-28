@@ -13,7 +13,7 @@ from rich.table import Table
 
 from benchmarks.client import OllamaClient
 from benchmarks.metrics import MemoryTracker, get_system_info
-from benchmarks.models import BenchmarkRequest
+from benchmarks.models import BenchmarkRequest, BenchmarkResult
 
 app = typer.Typer(
     name="bench",
@@ -55,13 +55,13 @@ def run(
 
     # Memory tracking
     tracker = MemoryTracker() if track_memory else None
-    if tracker:
+    if tracker is not None:
         tracker.start()
 
     request = BenchmarkRequest(model=model, prompt=prompt, base_url=url, timeout=timeout)
     result = client.generate(request)
 
-    if tracker:
+    if tracker is not None:
         mem_snapshot = tracker.stop()
         result.peak_memory_mib = mem_snapshot.rss_mib
 
@@ -114,7 +114,7 @@ def compare(
     console.print(f"[dim]Found {len(models)} models: {', '.join(models)}[/dim]")
     console.print()
 
-    results = []
+    results: list[BenchmarkResult] = []
     for model_name in models:
         console.print(f"[bold]→ Benchmarking {model_name}...[/bold]")
         tracker = MemoryTracker()
@@ -142,7 +142,7 @@ def compare(
     console.print(table)
 
 
-def _display_result(result) -> None:
+def _display_result(result: BenchmarkResult) -> None:
     """Pretty-print a single benchmark result."""
     if not result.success:
         console.print(f"[red]✗ Failed: {result.error}[/red]")
@@ -171,7 +171,7 @@ def _display_result(result) -> None:
         console.print(f"[dim]{preview}{suffix}[/dim]")
 
 
-def _append_csv(result) -> None:
+def _append_csv(result: BenchmarkResult) -> None:
     """Append a benchmark result to the CSV file."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     write_header = not RESULTS_CSV.exists() or RESULTS_CSV.stat().st_size == 0
