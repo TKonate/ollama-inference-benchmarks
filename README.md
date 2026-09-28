@@ -30,6 +30,9 @@ bench run --model qwen3:1.7b --prompt "Explain Docker in five sentences."
 # Compare every locally available model on the same prompt
 bench compare
 
+# Run the standardized prompt suite (summarization, classification, code generation)
+bench suite --model qwen3:1.7b
+
 # Show hardware info relevant to benchmarking
 bench info
 ```
@@ -86,8 +89,8 @@ Full details in [`docs/methodology.md`](docs/methodology.md).
 - [x] **CSV export** — structured results appended to `data/results.csv` by default
 - [x] **GitHub Actions CI** — automated lint, type checking (mypy strict) and tests
 - [x] **Docker setup** — reproducible benchmark environment with the CLI bundled
+- [x] **Benchmark suite** — standardized prompt set covering summarization, classification, code generation
 - [ ] **Multi-backend support** — llama.cpp, vLLM (CPU mode) alongside Ollama
-- [ ] **Benchmark suite** — standardized prompt set covering summarization, classification, code generation
 - [ ] **Cold vs. warm latency** — per IETF §4.5.1 recommendations
 
 ## Project structure

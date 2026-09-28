@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ollama-inference-benchmarks"
-version = "0.2.0"
+version = "0.3.0"
 description = "LLM benchmarks for hardware you already own — no GPU required."
 readme = "README.md"
 license = "MIT"
