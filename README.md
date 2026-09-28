@@ -2,6 +2,8 @@
 
 > **LLM benchmarks for hardware you already own — no GPU required.**
 
+[![CI](https://github.com/TKonate/ollama-inference-benchmarks/actions/workflows/ci.yml/badge.svg)](https://github.com/TKonate/ollama-inference-benchmarks/actions/workflows/ci.yml)
+
 Systematic, reproducible inference benchmarks for small language models running on CPU-only machines. If you're running Ollama on a VPS, a laptop, or a used server, this project helps you measure what actually works.
 
 ## Who is this for?
@@ -9,26 +11,45 @@ Systematic, reproducible inference benchmarks for small language models running 
 - **Solo developers** choosing a model for local async tasks
 - **Small teams** evaluating whether self-hosted inference beats API costs
 - **Students and hobbyists** exploring local AI without buying a GPU
-- **Budget-conscious ops** sizing a VPS for low-conference inference workloads
+- **Budget-conscious ops** sizing a VPS for low-concurrency inference workloads
 
 If you have a GPU, projects like [LLM-Inference-Bench](https://github.com/argonne-lcf/LLM-Inference-Bench) are better suited. This project focuses on the segment that nobody else benchmarks: constrained CPU-only environments.
 
 ## Quick start
 
 ```bash
-# Run a single benchmark
-python3 scripts/benchmark.py --model qwen3:1.7b --prompt "Explain Docker in five sentences."
+# Install the CLI (requires Python 3.10+)
+pip install -e ".[dev]"
 
-# Compare multiple models
-for model in qwen3:1.7b llama3.2:1b gemma3:1b; do
-  python3 scripts/benchmark.py --model "$model" --prompt "Explain Docker in five sentences."
-done
+# Or, with uv
+uv sync --extra dev
+
+# Run a single benchmark
+bench run --model qwen3:1.7b --prompt "Explain Docker in five sentences."
+
+# Compare every locally available model on the same prompt
+bench compare
+
+# Show hardware info relevant to benchmarking
+bench info
 ```
 
 **Requirements:**
 - Python 3.10+
-- Ollama running locally or at a configured URL
+- Ollama running locally or at a configured URL (`bench run --url http://host:11434`)
 - The selected model already available in Ollama
+
+### Run in Docker
+
+```bash
+docker build -t ollama-bench .
+
+# Use the host network to reach a local Ollama instance
+docker run --rm --network host ollama-bench bench run --model qwen3:1.7b --prompt "Hello"
+
+# Run the test suite inside the container
+docker run --rm ollama-bench
+```
 
 ## Sample results
 
@@ -62,25 +83,32 @@ Full details in [`docs/methodology.md`](docs/methodology.md).
 
 ## Roadmap
 
+- [x] **CSV export** — structured results appended to `data/results.csv` by default
+- [x] **GitHub Actions CI** — automated lint, type checking (mypy strict) and tests
+- [x] **Docker setup** — reproducible benchmark environment with the CLI bundled
 - [ ] **Multi-backend support** — llama.cpp, vLLM (CPU mode) alongside Ollama
 - [ ] **Benchmark suite** — standardized prompt set covering summarization, classification, code generation
-- [ ] **CSV export** — structured results for comparison across runs
-- [ ] **GitHub Actions CI** — automated linting and smoke tests
-- [ ] **Docker setup** — reproducible benchmark environment
 - [ ] **Cold vs. warm latency** — per IETF §4.5.1 recommendations
 
 ## Project structure
 
 ```
 ollama-inference-benchmarks/
-├── scripts/
-│   └── benchmark.py          # Main benchmark script
-├── data/
-│   └── results.csv           # Recorded observations
+├── benchmarks/
+│   ├── cli.py               # Typer CLI (run / compare / info)
+│   ├── client.py            # Ollama REST API client
+│   ├── metrics.py           # Response-time and memory tracking
+│   └── models.py            # Pydantic request/result models
+├── tests/                   # pytest suite (21 tests, CI on Python 3.10–3.12)
 ├── docs/
-│   ├── methodology.md        # Measurement protocol and boundaries
-│   └── positioning.md        # Competitive landscape and niche
-└── README.md
+│   ├── methodology.md       # Measurement protocol and boundaries
+│   └── positioning.md       # Competitive landscape and niche
+├── data/
+│   └── results.csv          # Recorded observations
+├── .github/workflows/ci.yml # Lint & format, mypy strict, tests
+├── scripts/                 # Legacy standalone benchmark script
+├── Dockerfile               # Reproducible benchmark environment
+└── pyproject.toml           # Packaging, `bench` entry point, ruff/mypy config
 ```
 
 ## Contributing
