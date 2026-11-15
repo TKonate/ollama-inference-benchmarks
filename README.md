@@ -39,6 +39,13 @@ bench compare
 # Run the standardized prompt suite (summarization, classification, code generation)
 bench suite --model qwen3:1.7b
 
+# Run a reproducible campaign: models x suite x repeats -> raw JSONL dataset
+bench matrix --models qwen3:0.6b,llama3.2:1b --runs 5 --prompts-per-category 2 \
+             --out data/campaigns/my-machine.jsonl
+
+# Regenerate a published report (markdown + SVG charts) from that dataset
+bench report --dataset data/campaigns/my-machine.jsonl --out-dir docs/results
+
 # Show hardware info relevant to benchmarking
 bench info
 ```
@@ -98,6 +105,12 @@ Full details in [`docs/methodology.md`](docs/methodology.md).
 - [x] **Benchmark suite** — standardized prompt set covering summarization, classification, code generation
 - [x] **Multi-backend support** — llama.cpp and vLLM (CPU mode) via an OpenAI-compatible API alongside Ollama
 - [x] **Cold vs. warm latency** — first run is cold, warm median reported (per IETF §4.5.1)
+- [x] **Time to first token** — streamed responses, first chunk timestamped
+- [x] **Real generation throughput** — token counts from the server's own counters, not wall clock
+- [x] **Peak server memory** — RSS of the Ollama process tree sampled during the run
+- [x] **Reproducible campaigns** — `bench matrix` writes raw JSONL with an environment fingerprint
+- [x] **Generated reports** — `bench report` produces markdown tables and dependency-free SVG charts
+- [x] **MIT license**
 
 ## Project structure
 

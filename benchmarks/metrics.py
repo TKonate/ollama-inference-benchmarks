@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import platform
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -115,3 +119,213 @@ def get_system_info() -> dict[str, str | int | float]:
         pass
 
     return info
+
+
+# --------------------------------------------------------------------------- #
+# Environment fingerprint
+# --------------------------------------------------------------------------- #
+
+
+def read_cpu_model() -> str:
+    """Return the CPU model string, from /proc/cpuinfo when available."""
+    try:
+        with open("/proc/cpuinfo", encoding="utf-8") as handle:
+            for line in handle:
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or "unknown"
+
+
+@dataclass(frozen=True)
+class Environment:
+    """Machine fingerprint attached to a benchmark dataset.
+
+    A result without its environment is not reproducible: the same model can
+    differ by 10x between a 2-vCPU VPS and a modern desktop. Every dataset this
+    project publishes carries this block.
+    """
+
+    captured_at: str
+    cpu_model: str
+    cpu_count: int
+    total_ram_gib: float
+    available_ram_gib: float
+    kernel: str
+    os_name: str
+    python_version: str
+    ollama_version: str | None = None
+    load_average: tuple[float, float, float] | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        """Flatten to a JSON-serialisable mapping."""
+        return {
+            "captured_at": self.captured_at,
+            "cpu_model": self.cpu_model,
+            "cpu_count": self.cpu_count,
+            "total_ram_gib": self.total_ram_gib,
+            "available_ram_gib": self.available_ram_gib,
+            "kernel": self.kernel,
+            "os_name": self.os_name,
+            "python_version": self.python_version,
+            "ollama_version": self.ollama_version,
+            "load_average": list(self.load_average) if self.load_average else None,
+        }
+
+
+def get_environment(ollama_version: str | None = None) -> Environment:
+    """Capture the environment a benchmark campaign runs in."""
+    total_ram_gib = 0.0
+    available_ram_gib = 0.0
+    cpu_count = os.cpu_count() or 0
+
+    if HAS_PSUTIL and _psutil is not None:
+        try:
+            vm = _psutil.virtual_memory()
+            total_ram_gib = round(vm.total / (1024**3), 1)
+            available_ram_gib = round(vm.available / (1024**3), 1)
+            cpu_count = _psutil.cpu_count(logical=True) or cpu_count
+        except Exception:
+            pass
+
+    try:
+        load_average: tuple[float, float, float] | None = os.getloadavg()
+    except OSError:
+        load_average = None
+
+    return Environment(
+        captured_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        cpu_model=read_cpu_model(),
+        cpu_count=cpu_count,
+        total_ram_gib=total_ram_gib,
+        available_ram_gib=available_ram_gib,
+        kernel=platform.release(),
+        os_name=platform.platform(terse=True),
+        python_version=platform.python_version(),
+        ollama_version=ollama_version,
+        load_average=load_average,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Server-side memory sampling
+# --------------------------------------------------------------------------- #
+
+
+def _read_vm_rss_mib(pid: int) -> float | None:
+    """Read current RSS of a process from /proc/<pid>/status."""
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    kib = float(line.split()[1])
+                    return kib / 1024.0
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _child_pids(pid: int) -> list[int]:
+    """Return the direct children of a process using the kernel's children file."""
+    try:
+        with open(f"/proc/{pid}/task/{pid}/children", encoding="utf-8") as handle:
+            return [int(value) for value in handle.read().split() if value.isdigit()]
+    except (OSError, ValueError):
+        return []
+
+
+def _tree_rss_mib(pid: int) -> float | None:
+    """Sum RSS over a process and its descendants.
+
+    Ollama's daemon spawns a runner subprocess that actually holds the weights,
+    so measuring the daemon alone under-reports memory by two orders of
+    magnitude. The runner is a direct child, but the walk is recursive because
+    backends differ.
+    """
+    total = _read_vm_rss_mib(pid) or 0.0
+    seen = {pid}
+    stack = [pid]
+    while stack:
+        current = stack.pop()
+        for child in _child_pids(current):
+            if child in seen:
+                continue
+            seen.add(child)
+            total += _read_vm_rss_mib(child) or 0.0
+            stack.append(child)
+    return total or None
+
+
+class ServerMemoryTracker:
+    """Sample the RSS of the inference server process while a run is in flight.
+
+    ``MemoryTracker`` watches the client process, which is useless for
+    inference: the weights live in the backend process (the Ollama daemon).
+    This tracker follows the server PID instead, so the reported figure is the
+    memory the model actually occupies — weights plus KV cache.
+
+    Usage:
+        tracker = ServerMemoryTracker(pid)
+        tracker.start()
+        result = client.generate(request)
+        peak = tracker.stop()  # MiB, None when the PID was unknown or gone
+    """
+
+    def __init__(self, pid: int | None, interval: float = 0.05) -> None:
+        self.pid = pid
+        self._interval = interval
+        self._peak_mib: float = 0.0
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+
+    def _poll(self) -> None:
+        if not self.pid:
+            return
+        while not self._stop_event.is_set():
+            current = _tree_rss_mib(self.pid)
+            if current is not None and current > self._peak_mib:
+                self._peak_mib = current
+            self._stop_event.wait(self._interval)
+
+    def start(self) -> None:
+        """Begin sampling."""
+        self._peak_mib = 0.0
+        self._stop_event.clear()
+        if not self.pid:
+            return
+        self._thread = threading.Thread(target=self._poll, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> float | None:
+        """Stop sampling and return the peak RSS in MiB (None when unavailable)."""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+        current = _tree_rss_mib(self.pid) if self.pid else None
+        if current is not None and current > self._peak_mib:
+            self._peak_mib = current
+        return round(self._peak_mib, 1) if self._peak_mib > 0 else None
+
+
+def find_server_pid(port: int = 11434, name_hint: str = "ollama") -> int | None:
+    """Locate the process listening on ``port`` (the inference server).
+
+    Falls back to matching a process name when socket introspection is
+    unavailable, which happens in some containers.
+    """
+    if not HAS_PSUTIL or _psutil is None:
+        return None
+
+    with contextlib.suppress(Exception):
+        for conn in _psutil.net_connections(kind="inet"):
+            if conn.laddr and conn.laddr.port == port and conn.pid:
+                return int(conn.pid)
+
+    with contextlib.suppress(Exception):
+        for proc in _psutil.process_iter(["name"]):
+            proc_name = (proc.info.get("name") or "").lower()
+            if name_hint in proc_name and proc.pid != os.getpid():
+                return int(proc.pid)
+
+    return None
