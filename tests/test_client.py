@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import urllib.error
 from unittest.mock import MagicMock, patch
 
@@ -86,6 +87,55 @@ class TestOllamaClient:
         """Verify throughput is computed when both tokens and elapsed are positive."""
         result = ThroughputShim(elapsed_seconds=5.0, completion_tokens=20)
         result.compute_throughput()
+        assert result.tokens_per_second == 4.0
+
+
+class TestPayload:
+    """Request body shape — Ollama ignores misplaced parameters silently."""
+
+    def test_think_is_a_top_level_parameter(self):
+        client = OllamaClient(base_url="http://mock:11434")
+        request = BenchmarkRequest(
+            model="qwen3:0.6b", prompt="hi", options={"think": False, "temperature": 0}
+        )
+        payload = json.loads(client._build_payload(request, stream=False))
+        assert payload["think"] is False
+        assert payload["options"] == {"temperature": 0}
+
+    def test_keep_alive_is_forwarded(self):
+        client = OllamaClient(base_url="http://mock:11434")
+        request = BenchmarkRequest(model="m", prompt="hi", keep_alive=0)
+        payload = json.loads(client._build_payload(request, stream=False))
+        assert payload["keep_alive"] == 0
+
+
+class TestStreaming:
+    def test_first_chunk_gives_ttft_and_final_chunk_gives_counters(self):
+        client = OllamaClient(base_url="http://mock:11434")
+        request = BenchmarkRequest(model="test", prompt="Hello", stream=True)
+
+        chunks = [
+            b'{"response": "", "done": false}\n',
+            b'{"response": "Hel", "done": false}\n',
+            b'{"response": "lo", "done": false}\n',
+            b'{"response": "", "done": true, "eval_count": 8, '
+            b'"eval_duration": 2000000000, "load_duration": 500000000}\n',
+        ]
+
+        mock_response = MagicMock()
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_response.__iter__ = lambda s: iter(chunks)
+
+        with patch("urllib.request.urlopen", return_value=mock_response):
+            result = client.generate(request)
+
+        assert result.success is True
+        assert result.response_text == "Hello"
+        assert result.ttft_ms is not None
+        assert result.completion_tokens == 8
+        assert result.eval_seconds == 2.0
+        assert result.load_seconds == 0.5
         assert result.tokens_per_second == 4.0
 
 

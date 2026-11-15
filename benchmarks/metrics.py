@@ -8,6 +8,7 @@ import os
 import platform
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -238,10 +239,8 @@ def _child_pids(pid: int) -> list[int]:
 def _tree_rss_mib(pid: int) -> float | None:
     """Sum RSS over a process and its descendants.
 
-    Ollama's daemon spawns a runner subprocess that actually holds the weights,
-    so measuring the daemon alone under-reports memory by two orders of
-    magnitude. The runner is a direct child, but the walk is recursive because
-    backends differ.
+    Kept for servers that do fork their workers (vLLM does); Ollama detaches
+    its runner, which is why campaigns also pass a ``pid_provider``.
     """
     total = _read_vm_rss_mib(pid) or 0.0
     seen = {pid}
@@ -272,19 +271,40 @@ class ServerMemoryTracker:
         peak = tracker.stop()  # MiB, None when the PID was unknown or gone
     """
 
-    def __init__(self, pid: int | None, interval: float = 0.05) -> None:
+    def __init__(
+        self,
+        pid: int | None = None,
+        *,
+        pid_provider: Callable[[], list[int]] | None = None,
+        interval: float = 0.05,
+    ) -> None:
         self.pid = pid
+        self._pid_provider = pid_provider
         self._interval = interval
         self._peak_mib: float = 0.0
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
+    def _pids(self) -> list[int]:
+        """Resolve the processes to sample, preferring the runner finder.
+
+        The provider is called on every tick because a runner is a short-lived
+        process: it is replaced when the model is evicted or reloaded.
+        """
+        if self._pid_provider is not None:
+            found = self._pid_provider()
+            if found:
+                return found
+        if self.pid:
+            return [self.pid, *_child_pids(self.pid)]
+        return []
+
     def _poll(self) -> None:
-        if not self.pid:
+        if not self._pids():
             return
         while not self._stop_event.is_set():
-            current = _tree_rss_mib(self.pid)
-            if current is not None and current > self._peak_mib:
+            current = sum(_read_vm_rss_mib(pid) or 0.0 for pid in self._pids())
+            if current > self._peak_mib:
                 self._peak_mib = current
             self._stop_event.wait(self._interval)
 
@@ -292,7 +312,7 @@ class ServerMemoryTracker:
         """Begin sampling."""
         self._peak_mib = 0.0
         self._stop_event.clear()
-        if not self.pid:
+        if not self.pid and self._pid_provider is None:
             return
         self._thread = threading.Thread(target=self._poll, daemon=True)
         self._thread.start()
@@ -302,8 +322,8 @@ class ServerMemoryTracker:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2.0)
-        current = _tree_rss_mib(self.pid) if self.pid else None
-        if current is not None and current > self._peak_mib:
+        current = sum(_read_vm_rss_mib(pid) or 0.0 for pid in self._pids())
+        if current > self._peak_mib:
             self._peak_mib = current
         return round(self._peak_mib, 1) if self._peak_mib > 0 else None
 
@@ -329,3 +349,31 @@ def find_server_pid(port: int = 11434, name_hint: str = "ollama") -> int | None:
                 return int(proc.pid)
 
     return None
+
+
+def runner_pids(name_hint: str = "llama-server") -> list[int]:
+    """Return the PIDs of the backend's model runners.
+
+    The runner is *not* a child of the server: Ollama detaches it, so walking
+    the server's process tree finds nothing and memory reports come out two
+    orders of magnitude too small. Matching the process command line is the
+    only reliable way to find it without privileges.
+    """
+    matches: list[int] = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return matches
+
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                cmdline = handle.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        if name_hint in cmdline:
+            matches.append(pid)
+    return matches

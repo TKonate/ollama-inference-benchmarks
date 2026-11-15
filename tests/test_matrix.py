@@ -74,7 +74,7 @@ def test_campaign_writes_environment_results_and_summary(
 ) -> None:
     fake = FakeClient()
     monkeypatch.setattr(matrix_module, "OllamaClient", lambda **_: fake)
-    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda pid: _NoopTracker())
+    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda *args, **kwargs: _NoopTracker())
 
     out = tmp_path / "campaign.jsonl"
     config = CampaignConfig(models=["fake:1b"], runs=2, prompts_per_category=1)
@@ -99,7 +99,7 @@ def test_campaign_writes_environment_results_and_summary(
 def test_campaign_counts_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeClient(fail_models={"broken:1b"})
     monkeypatch.setattr(matrix_module, "OllamaClient", lambda **_: fake)
-    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda pid: _NoopTracker())
+    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda *args, **kwargs: _NoopTracker())
 
     out = tmp_path / "campaign.jsonl"
     config = CampaignConfig(models=["broken:1b"], runs=1, prompts_per_category=1)
@@ -107,6 +107,55 @@ def test_campaign_counts_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     assert outcome["failures"] == 3
     assert outcome["results"] == 3
+
+
+def test_only_the_first_run_of_a_model_is_cold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cold means "the model had to be loaded", not "first run of a prompt"."""
+    fake = FakeClient()
+    monkeypatch.setattr(matrix_module, "OllamaClient", lambda **_: fake)
+    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda pid, **_: _NoopTracker())
+
+    out = tmp_path / "campaign.jsonl"
+    config = CampaignConfig(models=["fake:1b"], runs=3, prompts_per_category=2)
+    run_campaign(config, out)
+
+    records = [json.loads(line) for line in out.read_text().splitlines() if line.strip()]
+    results = [r["result"] for r in records if r["type"] == "result"]
+    phases = [r["phase"] for r in results]
+    assert phases.count("cold") == 1
+    assert phases[0] == "cold"
+    assert all(phase == "warm" for phase in phases[1:])
+
+
+def test_reasoning_models_get_thinking_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reasoning model must not spend the token budget before emitting text."""
+    seen: list[dict[str, object]] = []
+
+    class ThinkingClient(FakeClient):
+        def model_details(self, model: str) -> dict[str, object]:
+            return {
+                "details": {"parameter_size": "0.6B", "quantization_level": "Q4_K_M"},
+                "capabilities": ["completion", "thinking"],
+            }
+
+        def generate(self, request):  # type: ignore[no-untyped-def]
+            seen.append(dict(request.options))
+            return BenchmarkResult(
+                model=request.model, prompt=request.prompt, elapsed_seconds=1.0, ttft_ms=90.0
+            )
+
+    monkeypatch.setattr(matrix_module, "OllamaClient", lambda **_: ThinkingClient())
+    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda pid, **_: _NoopTracker())
+
+    run_campaign(
+        CampaignConfig(models=["thinker:0.6b"], runs=1, prompts_per_category=1),
+        tmp_path / "c.jsonl",
+    )
+    assert seen and all(options.get("think") is False for options in seen)
 
 
 def test_campaign_raises_when_server_unreachable(

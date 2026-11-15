@@ -29,6 +29,7 @@ class ModelSummary:
     p95_elapsed_seconds: float | None
     median_load_seconds: float | None
     peak_rss_mib: float | None
+    model_size_mib: float | None
     parameter_size: str | None
     quantization: str | None
 
@@ -106,6 +107,9 @@ def summarize(results: list[BenchmarkResult]) -> list[ModelSummary]:
                 peak_rss_mib=max(
                     (r.server_peak_rss_mib for r in successes if r.server_peak_rss_mib is not None),
                     default=None,
+                ),
+                model_size_mib=_median(
+                    [r.model_size_mib for r in successes if r.model_size_mib is not None]
                 ),
                 parameter_size=next(
                     (r.parameter_size for r in successes if r.parameter_size), None
@@ -233,9 +237,9 @@ def render_markdown(
     lines.append("")
     lines.append(
         "| Model | Params | Quant | TTFT (ms) | tok/s | Median latency (s) | p95 (s) "
-        "| Cold load (s) | Peak RSS (MiB) | Failures |"
+        "| Cold load (s) | Model in memory (MiB) | Runner RSS (MiB) | Failures |"
     )
-    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
     for summary in summaries:
         lines.append(
             f"| `{summary.model}` | {summary.parameter_size or '—'} "
@@ -244,7 +248,8 @@ def render_markdown(
             f"| {_fmt(summary.median_tokens_per_second, '', 2)} "
             f"| {_fmt(summary.median_elapsed_seconds)} "
             f"| {_fmt(summary.p95_elapsed_seconds)} "
-            f"| {_fmt(summary.median_load_seconds)} "
+            f"| {_fmt(summary.median_load_seconds, '', 2)} "
+            f"| {_fmt(summary.model_size_mib, '', 0)} "
             f"| {_fmt(summary.peak_rss_mib, '', 0)} "
             f"| {summary.failures} |"
         )

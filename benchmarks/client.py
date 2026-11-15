@@ -158,8 +158,15 @@ class OllamaClient:
         }
         if request.keep_alive is not None:
             body["keep_alive"] = request.keep_alive
-        if request.options:
-            body["options"] = request.options
+
+        options = dict(request.options)
+        # "think" is a top-level API parameter, not a sampling option: keeping it
+        # inside "options" makes Ollama ignore it silently.
+        think = options.pop("think", None)
+        if think is not None:
+            body["think"] = think
+        if options:
+            body["options"] = options
         return json.dumps(body).encode()
 
     def _new_result(self, request: BenchmarkRequest) -> BenchmarkResult:

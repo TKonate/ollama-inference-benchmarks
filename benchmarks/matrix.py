@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.client import OllamaClient
-from benchmarks.metrics import ServerMemoryTracker, find_server_pid, get_environment
+from benchmarks.metrics import ServerMemoryTracker, find_server_pid, get_environment, runner_pids
 from benchmarks.models import BenchmarkRequest
 from benchmarks.suite import SUITE
 
@@ -92,6 +92,7 @@ def _model_metadata(client: OllamaClient, model: str) -> dict[str, Any]:
         "parameter_size": details_block.get("parameter_size"),
         "quantization": details_block.get("quantization_level"),
         "digest": details.get("digest"),
+        "capabilities": details.get("capabilities") or [],
     }
     for running in client.running_models():
         if str(running.get("name", "")) == model or str(running.get("model", "")) == model:
@@ -137,24 +138,39 @@ def run_campaign(
             "options": config.options,
             "runs": config.runs,
             "server_pid": server_pid,
+            "server_pid_is_daemon": True,
             "campaign_started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         handle.write(json.dumps(header) + "\n")
 
         current_model: str | None = None
         metadata: dict[str, Any] = {}
+        model_options: dict[str, object] = dict(config.options)
+        cold_pending = True
 
         for cell in cells:
             if cell.model != current_model:
                 current_model = cell.model
+                cold_pending = True
                 if config.unload_between_models:
                     client.unload(cell.model)
-                    client.wait_until_unloaded(cell.model)
+                    if not client.wait_until_unloaded(cell.model):
+                        emit(
+                            f"  warning: {cell.model} still resident after eviction — "
+                            "the next row is not a true cold start"
+                        )
                 metadata = _model_metadata(client, cell.model)
+                model_options = dict(config.options)
+                if "thinking" in (metadata.get("capabilities") or []):
+                    # Reasoning models burn the token budget before emitting a
+                    # visible token, which leaves TTFT undefined and compares
+                    # verbosity instead of speed. Thinking is disabled and the
+                    # choice is recorded with the dataset.
+                    model_options["think"] = False
                 emit(f"model {cell.model} — {metadata.get('parameter_size') or '?'} ")
 
             for run_index in range(config.runs):
-                tracker = ServerMemoryTracker(server_pid)
+                tracker = ServerMemoryTracker(server_pid, pid_provider=runner_pids)
                 tracker.start()
                 request = BenchmarkRequest(
                     model=cell.model,
@@ -162,13 +178,14 @@ def run_campaign(
                     base_url=config.url,
                     timeout=config.timeout,
                     stream=True,
-                    options=config.options,
+                    options=model_options,
                 )
                 result = client.generate(request)
                 peak_rss = tracker.stop()
 
                 result.run_index = run_index
-                result.phase = "cold" if run_index == 0 else "warm"
+                result.phase = "cold" if cold_pending else "warm"
+                cold_pending = False
                 result.category = cell.category
                 result.prompt_id = cell.prompt_id
                 result.server_peak_rss_mib = peak_rss
