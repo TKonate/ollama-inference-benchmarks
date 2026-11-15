@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="276" viewBox="0 0 720 276" role="img" aria-label="Median generation speed">
+<text x="16" y="24" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#111827">Median generation speed</text>
+<text x="16" y="73.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">gemma3:270m</text>
+<rect x="190" y="50" width="492.2" height="34" rx="4" fill="#2563eb" opacity="0.9"/>
+<text x="690.2" y="73.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">25.3 tok/s</text>
+<text x="16" y="115.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">llama3.2:1b</text>
+<rect x="190" y="92" width="163.4" height="34" rx="4" fill="#2563eb" opacity="0.9"/>
+<text x="361.4" y="115.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">8.4 tok/s</text>
+<text x="16" y="157.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">qwen2.5:0.5b</text>
+<rect x="190" y="134" width="498.0" height="34" rx="4" fill="#2563eb" opacity="0.9"/>
+<text x="696.0" y="157.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">25.6 tok/s</text>
+<text x="16" y="199.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">qwen3:0.6b</text>
+<rect x="190" y="176" width="352.1" height="34" rx="4" fill="#2563eb" opacity="0.9"/>
+<text x="550.1" y="199.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">18.1 tok/s</text>
+<text x="16" y="241.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">smollm2:360m</text>
+<rect x="190" y="218" width="250.9" height="34" rx="4" fill="#2563eb" opacity="0.9"/>
+<text x="448.9" y="241.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">12.9 tok/s</text>
+</svg>

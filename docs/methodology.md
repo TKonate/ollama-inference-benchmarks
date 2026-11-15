@@ -96,6 +96,17 @@ For reproducible results:
 6. **Separate concerns**: Cold start vs. warm latency (when implementing)
 7. **Record raw data**: Preserve individual measurements alongside aggregates
 
+## Measurement log
+
+- **2026-11-15 — first campaign discarded.** Two harness defects were caught by
+  auditing the dataset instead of trusting the summary: the `phase` field marked the
+  first run of *every* prompt as cold (five of six "cold loads" per model were warm
+  starts reading 0.002 s), and memory sampling followed the daemon instead of the
+  detached runner (26-48 MiB reported for models occupying 300-1450 MiB). Both were
+  fixed, and the campaign was re-run from scratch. The published dataset is the
+  re-run; the discarded one is not kept, deliberately — a wrong number with a
+  plausible shape is worse than no number.
+
 ## Privacy boundary
 
 Prompts and responses must not contain personal, infrastructure-sensitive or credential-bearing data. Benchmark data should remain synthetic or public.

@@ -300,6 +300,22 @@ def render_markdown(
         "- **Noise.** A shared machine is never quiet. p95 latency is reported next to the "
         "median precisely because run-to-run spread is real."
     )
+    lines.append(
+        "- **Runner RSS is an upper bound.** It counts resident pages, including the "
+        "file-backed weights the kernel can reclaim under memory pressure. It is not a "
+        "private-memory figure, and it is not the memory you need to *buy*: compare it with "
+        "the model size column."
+    )
+    if environment:
+        env = environment.get("environment", {})
+        load = env.get("load_average")
+        cpu_count = env.get("cpu_count") or 0
+        if isinstance(load, list | tuple) and load and cpu_count and float(load[0]) > cpu_count:
+            lines.append(
+                f"- **The host was oversubscribed at start**: load average {float(load[0]):.1f} "
+                f"on {cpu_count} vCPU. These medians describe a busy machine, which is the "
+                "honest case for a shared VPS but not the best case for this hardware."
+            )
     lines.append("")
     return "\n".join(lines)
 

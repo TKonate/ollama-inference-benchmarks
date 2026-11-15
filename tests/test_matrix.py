@@ -74,7 +74,9 @@ def test_campaign_writes_environment_results_and_summary(
 ) -> None:
     fake = FakeClient()
     monkeypatch.setattr(matrix_module, "OllamaClient", lambda **_: fake)
-    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda *args, **kwargs: _NoopTracker())
+    monkeypatch.setattr(
+        matrix_module, "ServerMemoryTracker", lambda *args, **kwargs: _NoopTracker()
+    )
 
     out = tmp_path / "campaign.jsonl"
     config = CampaignConfig(models=["fake:1b"], runs=2, prompts_per_category=1)
@@ -99,7 +101,9 @@ def test_campaign_writes_environment_results_and_summary(
 def test_campaign_counts_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeClient(fail_models={"broken:1b"})
     monkeypatch.setattr(matrix_module, "OllamaClient", lambda **_: fake)
-    monkeypatch.setattr(matrix_module, "ServerMemoryTracker", lambda *args, **kwargs: _NoopTracker())
+    monkeypatch.setattr(
+        matrix_module, "ServerMemoryTracker", lambda *args, **kwargs: _NoopTracker()
+    )
 
     out = tmp_path / "campaign.jsonl"
     config = CampaignConfig(models=["broken:1b"], runs=1, prompts_per_category=1)
