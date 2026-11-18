@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="276" viewBox="0 0 720 276" role="img" aria-label="Median time to first token">
+<text x="16" y="24" font-family="system-ui, sans-serif" font-size="15" font-weight="600" fill="#111827">Median time to first token</text>
+<text x="16" y="73.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">gemma3:270m</text>
+<rect x="190" y="50" width="498.0" height="34" rx="4" fill="#0f766e" opacity="0.9"/>
+<text x="696.0" y="73.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">156.7 ms</text>
+<text x="16" y="115.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">llama3.2:1b</text>
+<rect x="190" y="92" width="443.7" height="34" rx="4" fill="#0f766e" opacity="0.9"/>
+<text x="641.7" y="115.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">139.6 ms</text>
+<text x="16" y="157.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">qwen2.5:0.5b</text>
+<rect x="190" y="134" width="241.8" height="34" rx="4" fill="#0f766e" opacity="0.9"/>
+<text x="439.8" y="157.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">76.1 ms</text>
+<text x="16" y="199.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">qwen3:0.6b</text>
+<rect x="190" y="176" width="289.2" height="34" rx="4" fill="#0f766e" opacity="0.9"/>
+<text x="487.2" y="199.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">91.0 ms</text>
+<text x="16" y="241.12" font-family="system-ui, sans-serif" font-size="13" fill="#374151">smollm2:360m</text>
+<rect x="190" y="218" width="396.0" height="34" rx="4" fill="#0f766e" opacity="0.9"/>
+<text x="594.0" y="241.12" font-family="system-ui, sans-serif" font-size="13" fill="#111827">124.6 ms</text>
+</svg>

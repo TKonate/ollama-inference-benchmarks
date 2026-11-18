@@ -2,6 +2,9 @@
 
 > **LLM benchmarks for hardware you already own — no GPU required.**
 
+**Current release: v0.5.0** — time to first token, real generation throughput, peak server memory
+and reproducible campaigns. [Changelog](CHANGELOG.md).
+
 [![CI](https://github.com/TKonate/ollama-inference-benchmarks/actions/workflows/ci.yml/badge.svg)](https://github.com/TKonate/ollama-inference-benchmarks/actions/workflows/ci.yml)
 
 Systematic, reproducible inference benchmarks for small language models running on CPU-only machines. If you're running Ollama on a VPS, a laptop, or a used server, this project helps you measure what actually works.
@@ -39,6 +42,13 @@ bench compare
 # Run the standardized prompt suite (summarization, classification, code generation)
 bench suite --model qwen3:1.7b
 
+# Run a reproducible campaign: models x suite x repeats -> raw JSONL dataset
+bench matrix --models qwen3:0.6b,llama3.2:1b --runs 5 --prompts-per-category 2 \
+             --out data/campaigns/my-machine.jsonl
+
+# Regenerate a published report (markdown + SVG charts) from that dataset
+bench report --dataset data/campaigns/my-machine.jsonl --out-dir docs/results
+
 # Show hardware info relevant to benchmarking
 bench info
 ```
@@ -62,16 +72,30 @@ docker run --rm ollama-bench
 
 ## Sample results
 
-These benchmarks were run on a CPU-only VPS (6 GB RAM, no GPU):
+A full campaign — 5 models × 6 prompts × 5 repeats, greedy decoding, 256-token cap —
+on a shared 4-vCPU VPS (AMD EPYC, 7.8 GiB RAM, no GPU, Ollama 0.40.16):
 
-| Model | Response time | RAM usage | Quality |
-|---|---:|---:|---|
-| Qwen3 1.7B | ~73 s | ~1.9–2.9 GiB | ✅ Best compromise |
-| Llama 3.2 1B | ~57–71 s | ~1.5–4.0 GiB | ⚠️ Fast but unreliable |
-| Gemma 3 1B | ~75–91 s | ~1.0–3.5 GiB | ❌ Quality doesn't justify cost |
-| SmolLM2 1.7B | ~255 s | ~3.5 GiB | ❌ Too slow |
+| Model | Params | TTFT | Generation | Median latency | Model in memory |
+|---|---:|---:|---:|---:|---:|
+| `qwen2.5:0.5b` | 494M | 76 ms | 25.6 tok/s | 2.2 s | 464 MiB |
+| `gemma3:270m` | 268M | 157 ms | 25.3 tok/s | 4.0 s | 311 MiB |
+| `qwen3:0.6b` | 752M | 91 ms | 18.1 tok/s | 2.6 s | 973 MiB |
+| `smollm2:360m` | 362M | 125 ms | 12.9 tok/s | 4.4 s | 879 MiB |
+| `llama3.2:1b` | 1.2B | 140 ms | 8.4 tok/s | 8.6 s | 1453 MiB |
 
-> These are observations from one constrained environment. They are not universal model benchmarks. See [Methodology](docs/methodology.md) for measurement boundaries.
+Full tables, charts and caveats: [`docs/results/2026-11-15-vps-4vcpu.md`](docs/results/2026-11-15-vps-4vcpu.md).
+Raw rows: [`data/campaigns/2026-11-15-vps-4vcpu.jsonl`](data/campaigns/2026-11-15-vps-4vcpu.jsonl).
+
+Reading it honestly: parameter count predicts memory, not speed. The 268M model is not
+faster than the 494M one, and the 1.2B model is three times slower per token than either.
+Quantisation matters as much as size — `smollm2:360m` ships in F16 and lands behind models
+with more parameters stored in Q4. Peak latency (p95) is 2-4× the median on this host
+because the machine is shared; the report publishes both rather than hiding the spread
+behind a mean.
+
+> These numbers belong to the environment above. They are not a claim that a model is
+> "fast" in general, and they say nothing about answer quality — the responses are stored
+> in the dataset so it can be judged separately.
 
 ## Methodology
 
@@ -98,6 +122,12 @@ Full details in [`docs/methodology.md`](docs/methodology.md).
 - [x] **Benchmark suite** — standardized prompt set covering summarization, classification, code generation
 - [x] **Multi-backend support** — llama.cpp and vLLM (CPU mode) via an OpenAI-compatible API alongside Ollama
 - [x] **Cold vs. warm latency** — first run is cold, warm median reported (per IETF §4.5.1)
+- [x] **Time to first token** — streamed responses, first chunk timestamped
+- [x] **Real generation throughput** — token counts from the server's own counters, not wall clock
+- [x] **Peak server memory** — RSS of the Ollama process tree sampled during the run
+- [x] **Reproducible campaigns** — `bench matrix` writes raw JSONL with an environment fingerprint
+- [x] **Generated reports** — `bench report` produces markdown tables and dependency-free SVG charts
+- [x] **MIT license**
 
 ## Project structure
 

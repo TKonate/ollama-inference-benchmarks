@@ -13,8 +13,10 @@ from rich.table import Table
 
 from benchmarks.analysis import summarize_cold_warm
 from benchmarks.clients import get_client
+from benchmarks.matrix import CampaignConfig, run_campaign
 from benchmarks.metrics import MemoryTracker, get_system_info
 from benchmarks.models import BackendType, BenchmarkRequest, BenchmarkResult
+from benchmarks.report import write_report
 from benchmarks.suite import CATEGORY_DESCRIPTIONS, SUITE
 
 app = typer.Typer(
@@ -271,6 +273,70 @@ def _append_csv(
 
     if not silent:
         console.print(f"[dim]✓ Saved to {RESULTS_CSV}[/dim]")
+
+
+@app.command()
+def matrix(
+    models: str = typer.Option(
+        ..., help="Comma-separated model tags, e.g. 'qwen3:0.6b,llama3.2:1b'"
+    ),
+    url: str = typer.Option("http://127.0.0.1:11434", help="Ollama base URL"),
+    runs: int = typer.Option(3, min=1, help="Repeats per prompt; run 1 is cold, the rest warm"),
+    prompts_per_category: int = typer.Option(
+        1, min=1, help="How many prompts of each suite category to run"
+    ),
+    out: Path = typer.Option(..., help="Destination JSONL dataset"),
+    timeout: int = typer.Option(600, help="Per-request timeout in seconds"),
+    unload: bool = typer.Option(
+        True, help="Evict each model before its first run so the cold start is real"
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable debug logging"),
+) -> None:
+    """Run a reproducible campaign: models x prompt suite x repeats -> JSONL."""
+    logging.basicConfig(level=logging.DEBUG if verbose else logging.WARNING)
+
+    model_list = [m.strip() for m in models.split(",") if m.strip()]
+    if not model_list:
+        console.print("[red]✗ No model given.[/red]")
+        raise typer.Exit(code=2)
+
+    config = CampaignConfig(
+        url=url,
+        models=model_list,
+        runs=runs,
+        prompts_per_category=prompts_per_category,
+        timeout=timeout,
+        unload_between_models=unload,
+    )
+
+    console.print(f"[bold]{len(model_list)} models[/bold], {runs} runs per prompt")
+    console.print(f"[dim]dataset → {out}[/dim]\n")
+
+    try:
+        outcome = run_campaign(config, out, progress=lambda message: console.print(message))
+    except RuntimeError as exc:
+        console.print(f"[red]✗ {exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    if outcome["failures"]:
+        console.print(f"[yellow]{outcome['failures']} run(s) failed.[/yellow]")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def report(
+    dataset: Path = typer.Option(..., help="Campaign JSONL produced by 'bench matrix'"),
+    out_dir: Path = typer.Option(Path("docs/results"), help="Where markdown and SVG go"),
+    stem: str | None = typer.Option(None, help="Output file stem (default: dataset name)"),
+) -> None:
+    """Regenerate the results report and charts from a campaign dataset."""
+    if not dataset.exists():
+        console.print(f"[red]✗ Dataset not found: {dataset}[/red]")
+        raise typer.Exit(code=2)
+
+    written = write_report(dataset, out_dir, stem=stem)
+    for path in written:
+        console.print(f"[green]✓[/green] {path}")
 
 
 if __name__ == "__main__":
