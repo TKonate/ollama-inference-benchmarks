@@ -2,6 +2,9 @@
 
 > **LLM benchmarks for hardware you already own — no GPU required.**
 
+**Current release: v0.5.0** — time to first token, real generation throughput, peak server memory
+and reproducible campaigns. [Changelog](CHANGELOG.md).
+
 [![CI](https://github.com/TKonate/ollama-inference-benchmarks/actions/workflows/ci.yml/badge.svg)](https://github.com/TKonate/ollama-inference-benchmarks/actions/workflows/ci.yml)
 
 Systematic, reproducible inference benchmarks for small language models running on CPU-only machines. If you're running Ollama on a VPS, a laptop, or a used server, this project helps you measure what actually works.
