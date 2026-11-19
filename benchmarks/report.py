@@ -36,6 +36,8 @@ class ModelSummary:
     @property
     def failure_rate(self) -> float:
         """Fraction of runs that failed, 0.0 when nothing was attempted."""
+        # ``runs`` counts successes only, so the denominator has to be rebuilt
+        # from both fields or the rate would exceed 1 for a failing model.
         total = self.runs + self.failures
         return round(self.failures / total, 3) if total else 0.0
 
@@ -63,11 +65,15 @@ def _median(values: list[float]) -> float | None:
 
 
 def _p95(values: list[float]) -> float | None:
+    """Return a nearest-sample p95, without interpolation."""
     if not values:
         return None
     if len(values) == 1:
         return round(values[0], 1)
     ordered = sorted(values)
+    # Nearest lower sample rather than an interpolated quantile: with three warm
+    # runs this is simply the slowest one, which is the honest reading of a
+    # 3-sample tail and avoids inventing a value between two measurements.
     index = min(len(ordered) - 1, int(round(0.95 * (len(ordered) - 1))))
     return round(ordered[index], 1)
 
@@ -88,6 +94,8 @@ def summarize(results: list[BenchmarkResult]) -> list[ModelSummary]:
         successes = [r for r in rows if r.success]
         warm = [r for r in successes if r.phase == "warm"]
         cold = [r for r in successes if r.phase == "cold"]
+        # Single-run campaigns have no warm rows; falling back to every success
+        # keeps the table populated instead of leaving it empty.
         latency_rows = warm or successes
 
         summaries.append(

@@ -1,4 +1,11 @@
-"""Ollama API client with retry logic, streaming, and error handling."""
+"""HTTP client for Ollama's native /api/generate endpoint.
+
+The only module that talks to the Ollama daemon: payload building, stream
+parsing, and the projection of Ollama's nanosecond counters onto
+BenchmarkResult live here. It deliberately does not retry (a retried request
+would fold two timings into one row) and does not aggregate; campaigns and
+reports are matrix.py and report.py.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +20,7 @@ from benchmarks.models import BenchmarkRequest, BenchmarkResult
 
 logger = logging.getLogger(__name__)
 
-_NS_PER_SECOND = 1_000_000_000
+_NS_PER_SECOND = 1_000_000_000  # Ollama reports every duration in nanoseconds
 
 
 class OllamaClientError(Exception):
@@ -21,7 +28,13 @@ class OllamaClientError(Exception):
 
 
 def _seconds(nanoseconds: object) -> float | None:
-    """Convert an Ollama duration in nanoseconds to seconds."""
+    """Convert an Ollama nanosecond duration to seconds.
+
+    Rounding to 4 decimals keeps 0.1 ms resolution: coarser than
+    perf_counter, still well under the run-to-run spread of CPU inference.
+    Ollama sends 0 for durations it did not measure; that would read as an
+    instantaneous phase, so it is mapped to None and skipped by the medians.
+    """
     if isinstance(nanoseconds, int | float) and nanoseconds > 0:
         return round(float(nanoseconds) / _NS_PER_SECOND, 4)
     return None
@@ -30,9 +43,10 @@ def _seconds(nanoseconds: object) -> float | None:
 def _apply_ollama_timings(result: BenchmarkResult, data: dict[str, Any]) -> None:
     """Copy Ollama's own timing counters onto a result.
 
-    Ollama reports model load, prompt evaluation and generation separately.
-    Keeping them apart is what makes cold vs. warm and prompt-processing cost
-    separable in the published dataset.
+    Ollama reports model load, prompt evaluation and generation separately, all
+    measured inside the daemon, so these figures exclude HTTP transfer and are
+    the ones to compare across machines. Keeping the three apart is what makes
+    cold vs. warm and prompt-processing cost separable in the dataset.
     """
     result.load_seconds = _seconds(data.get("load_duration"))
     result.prompt_eval_seconds = _seconds(data.get("prompt_eval_duration"))
@@ -58,10 +72,6 @@ class OllamaClient:
     def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: int = 600) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-
-    # ------------------------------------------------------------------ #
-    # Introspection helpers
-    # ------------------------------------------------------------------ #
 
     def list_models(self) -> list[str]:
         """Return the tags Ollama advertises locally."""
@@ -133,16 +143,15 @@ class OllamaClient:
         """Poll /api/ps until no instance of the model is resident."""
         deadline = time.monotonic() + timeout
         family = model.split(":")[0]
+        # /api/ps reports the tag the daemon resolved ("qwen3:latest" for a bare
+        # "qwen3"), so comparing full tags would see the model as still loaded
+        # and spend the whole timeout on every campaign.
         while time.monotonic() < deadline:
             loaded = {str(m.get("name", "")).split(":")[0] for m in self.running_models()}
             if family not in loaded:
                 return True
             time.sleep(0.25)
         return False
-
-    # ------------------------------------------------------------------ #
-    # Generation
-    # ------------------------------------------------------------------ #
 
     def generate(self, request: BenchmarkRequest) -> BenchmarkResult:
         """Send a generate request and return a BenchmarkResult."""
@@ -178,12 +187,20 @@ class OllamaClient:
         )
 
     def _generate_once(self, request: BenchmarkRequest) -> BenchmarkResult:
+        """Send a non-streamed request and time it end to end.
+
+        ``elapsed_seconds`` covers model load, prompt processing and generation
+        together, which is the figure a user feels on a first request. The
+        daemon's counters split it afterwards.
+        """
         http_request = urllib.request.Request(
             f"{self.base_url}/api/generate",
             data=self._build_payload(request, stream=False),
             headers={"Content-Type": "application/json"},
         )
 
+        # perf_counter is monotonic: an NTP step during a 600 s timeout must not
+        # produce a negative latency.
         started = time.perf_counter()
         try:
             with urllib.request.urlopen(http_request, timeout=request.timeout) as response:
@@ -233,9 +250,14 @@ class OllamaClient:
                     piece = chunk.get("response")
                     if isinstance(piece, str):
                         if piece and ttft_ms is None:
+                            # The clock stops at the first chunk carrying text:
+                            # empty chunks mean the model has not emitted a
+                            # token yet, so timing them would flatter TTFT.
                             ttft_ms = round((time.perf_counter() - started) * 1000, 1)
                         chunks.append(piece)
                     if chunk.get("done"):
+                        # The done chunk is the only one carrying eval_count and
+                        # the durations, so it is kept as the timing source.
                         final = chunk
                         break
         except urllib.error.URLError as exc:

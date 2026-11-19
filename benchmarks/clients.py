@@ -31,7 +31,13 @@ class BackendClient(Protocol):
 
 
 def build_chat_payload(request: BenchmarkRequest) -> dict[str, Any]:
-    """Build the OpenAI-style /v1/chat/completions request body."""
+    """Build the OpenAI-style /v1/chat/completions request body.
+
+    ``request.options`` is dropped on purpose: those keys are Ollama's sampling
+    names, and llama.cpp and vLLM spell them differently. Sending them
+    untranslated would either be ignored or rejected, so these backends run at
+    their own defaults.
+    """
     return {
         "model": request.model,
         "messages": [{"role": "user", "content": request.prompt}],
@@ -44,7 +50,11 @@ def parse_chat_response(
     request: BenchmarkRequest,
     elapsed_seconds: float,
 ) -> BenchmarkResult:
-    """Convert an OpenAI-compatible completion response into a BenchmarkResult."""
+    """Convert an OpenAI-compatible completion response into a BenchmarkResult.
+
+    There is no TTFT here: the payload asks for a single non-streamed body, so
+    the field stays None and the report's TTFT column only covers Ollama runs.
+    """
     content = ""
     with contextlib.suppress(KeyError, IndexError, TypeError):
         content = data["choices"][0]["message"]["content"]

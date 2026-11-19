@@ -132,6 +132,8 @@ def run_campaign(
     campaign_started = time.monotonic()
 
     with open(out_path, "w", encoding="utf-8") as handle:
+        # Truncating, not appending: a JSONL file is one campaign, and mixing two
+        # campaigns under one environment header would make the report lie.
         header = {
             "type": "environment",
             "environment": environment.to_dict(),
@@ -170,6 +172,9 @@ def run_campaign(
                 emit(f"model {cell.model} — {metadata.get('parameter_size') or '?'} ")
 
             for run_index in range(config.runs):
+                # The tracker starts before the request so that a cold run
+                # includes the load in its peak; the runner it follows is
+                # replaced at every reload, hence the provider.
                 tracker = ServerMemoryTracker(server_pid, pid_provider=runner_pids)
                 tracker.start()
                 request = BenchmarkRequest(
@@ -184,12 +189,17 @@ def run_campaign(
                 peak_rss = tracker.stop()
 
                 result.run_index = run_index
+                # Cleared on the first attempt, successful or not: the load is
+                # paid once per eviction, so no later row may be labelled cold.
                 result.phase = "cold" if cold_pending else "warm"
                 cold_pending = False
                 result.category = cell.category
                 result.prompt_id = cell.prompt_id
                 result.server_peak_rss_mib = peak_rss
                 if peak_rss is not None:
+                    # peak_memory_mib is the older client-side column; keeping
+                    # both aligned means the CSV and the report agree on what
+                    # "memory" means for campaign rows.
                     result.peak_memory_mib = peak_rss
                 if result.success:
                     result.parameter_size = metadata.get("parameter_size")
@@ -198,7 +208,7 @@ def run_campaign(
                     if result.model_size_mib is None:
                         result.model_size_mib = metadata.get("model_size_mib")
                     if result.model_size_mib is None:
-                        # The model is resident now: /api/ps can report the real footprint.
+                        # Resident now, so /api/ps can report the real footprint.
                         metadata.update(_model_metadata(client, cell.model))
                         result.model_size_mib = metadata.get("model_size_mib")
                 else:

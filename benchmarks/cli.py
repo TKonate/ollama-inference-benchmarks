@@ -1,4 +1,11 @@
-"""Typer CLI for running inference benchmarks against supported backends."""
+"""Command line surface: one Typer app, one command per workflow.
+
+Every command is a thin shell over a library call so the pipeline stays
+testable without a terminal. The measurement lives in client.py, matrix.py and
+report.py; this module only chooses which piece to run and prints the result.
+It deliberately recomputes nothing, so what it prints is what the library
+measured.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +33,8 @@ app = typer.Typer(
 )
 console = Console()
 
+# Anchored to the source tree rather than the working directory: results.csv is
+# meant to land beside the repo's data/, wherever the command is invoked from.
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 RESULTS_CSV = DATA_DIR / "results.csv"
 
@@ -52,7 +61,8 @@ def run(
 
     client = get_client(backend, url, timeout)
 
-    # Health check
+    # Checked once up front: without it an unreachable server surfaces as N
+    # identical per-run failures instead of one setup error.
     if not client.health_check():
         console.print(f"[red]✗ Cannot reach {backend.value} at {url}[/red]")
         raise typer.Exit(code=1)
@@ -64,9 +74,13 @@ def run(
 
     results: list[BenchmarkResult] = []
     for run_index in range(runs):
+        # Labelled by position only: the CLI never evicts the model, so run 1 is
+        # a real cold start only when it was not already resident.
         label = "cold" if run_index == 0 else "warm"
 
-        # Memory tracking
+        # This tracker watches the benchmark process, not the server, so the
+        # figure describes the harness. `bench matrix` samples the runner and is
+        # the path that reports what the model actually occupies.
         tracker = MemoryTracker() if track_memory else None
         if tracker is not None:
             tracker.start()
@@ -88,7 +102,6 @@ def run(
         status = "[green]✓[/green]" if result.success else "[red]✗[/red]"
         console.print(f"  {status} {label:4s} run  {result.elapsed_seconds:6.2f}s")
 
-        # Save to CSV
         if save and result.success:
             _append_csv(result, source_label=f"{label} run")
 
@@ -154,7 +167,6 @@ def compare(
         result.peak_memory_mib = mem_snapshot.rss_mib
         results.append(result)
 
-    # Summary table
     table = Table(title="Comparison Results", show_header=True)
     table.add_column("Model", style="cyan")
     table.add_column("Time (s)", justify="right")
@@ -190,7 +202,6 @@ def suite(
 
     client = get_client(backend, url, timeout)
 
-    # Health check
     if not client.health_check():
         console.print(f"[red]✗ Cannot reach {backend.value} at {url}[/red]")
         raise typer.Exit(code=1)
@@ -236,7 +247,12 @@ def suite(
 def _append_csv(
     result: BenchmarkResult, *, silent: bool = False, source_label: str | None = None
 ) -> None:
-    """Append a benchmark result to the CSV file."""
+    """Append one result row to data/results.csv, writing the header if needed.
+
+    The prompt is clipped to 100 characters: the CSV is meant to stay loadable
+    in a spreadsheet, and a full suite prompt is several thousand characters on
+    a single line. The untruncated prompt is still on the BenchmarkResult.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     write_header = not RESULTS_CSV.exists() or RESULTS_CSV.stat().st_size == 0
 
@@ -262,6 +278,8 @@ def _append_csv(
             [
                 result.model,
                 result.elapsed_seconds,
+                # Falsy-coalescing on purpose: the column has two states, a
+                # number or a blank, so a missing count and a real 0 look alike.
                 result.tokens_per_second or "",
                 result.peak_memory_mib or "",
                 result.prompt_tokens or "",

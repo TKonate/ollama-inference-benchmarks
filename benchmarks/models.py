@@ -1,4 +1,11 @@
-"""Pydantic models for benchmark requests, responses, and results."""
+"""Request and result schema shared by every backend client.
+
+``BenchmarkResult`` is the row that reaches the JSONL dataset and then the
+report, so the units declared here (seconds, milliseconds, MiB, tokens per
+second) are the units the published tables carry. This module validates and
+derives; it does not measure, since every timing field is filled in by a
+client.
+"""
 
 from __future__ import annotations
 
@@ -38,9 +45,9 @@ class BenchmarkResult(BaseModel):
 
     Two latency families are recorded:
 
-    * ``elapsed_seconds`` — wall clock, from request send to last byte received.
+    * ``elapsed_seconds``: wall clock, from request send to last byte received.
       It includes queuing, model load and sampling.
-    * ``ttft_ms`` — time to first token, measured on streamed responses. This is
+    * ``ttft_ms``: time to first token, measured on streamed responses. This is
       what a user actually perceives before text starts appearing.
 
     Token throughput is derived from the backend's own counters
@@ -66,6 +73,8 @@ class BenchmarkResult(BaseModel):
 
     # Measurement detail
     run_index: int = Field(default=0, ge=0, description="0-based repeat index within a cell")
+    # Warm by default: a client that never evicted the model cannot know whether
+    # the load cost was already paid, and claiming cold would inflate latency.
     phase: str = Field(default="warm", description="'cold' when the model had to be loaded")
     category: str | None = Field(default=None, description="Task category from the suite")
     prompt_id: str | None = Field(default=None, description="Stable identifier of the prompt")
@@ -87,8 +96,17 @@ class BenchmarkResult(BaseModel):
     started_at: str | None = Field(default=None, description="ISO-8601 UTC start timestamp")
 
     def compute_throughput(self) -> None:
-        """Derive tokens/sec from the most reliable timing source available."""
+        """Derive tokens per second from the most reliable timing source available.
+
+        The backend's own generation timer comes first because it excludes model
+        load and prompt processing, which is what makes a cold run comparable to
+        a warm one. The wall-clock fallback is all a server without counters
+        allows; it covers the whole request, so on a cold run the value is a
+        lower bound on generation speed, not an estimate of it.
+        """
         if not self.completion_tokens:
+            # No output means no rate: leaving None keeps the report showing a
+            # dash instead of a plausible-looking zero.
             return
         if self.eval_seconds and self.eval_seconds > 0:
             self.tokens_per_second = round(self.completion_tokens / self.eval_seconds, 2)

@@ -1,4 +1,11 @@
-"""Latency analysis helpers — cold vs. warm runs (IETF §4.5.1)."""
+"""Cold versus warm latency, aggregated over repeat runs.
+
+Backs ``bench run --runs N``: the first successful run of a model pays the
+load cost, the rest do not, and averaging the two produces a figure that
+describes neither. It only reduces rows someone else measured, and it derives
+the cold bucket from row order rather than from the ``phase`` label that the
+campaign path sets.
+"""
 
 from __future__ import annotations
 
@@ -46,5 +53,8 @@ def summarize_cold_warm(results: list[BenchmarkResult]) -> ColdWarmStats:
     if not warm_times:
         return ColdWarmStats(cold_seconds=cold)
 
+    # The cold figure is one sample and the warm figure is a median: that
+    # asymmetry is deliberate, since only the first run can carry a load cost
+    # and there is therefore nothing to average it against.
     warm_median = round(statistics.median(warm_times), 2)
     return ColdWarmStats(cold_seconds=cold, warm_seconds=warm_median, warm_runs=len(warm_times))

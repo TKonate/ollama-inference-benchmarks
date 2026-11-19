@@ -1,4 +1,11 @@
-"""System metrics collection for benchmark runs."""
+"""Host and process metrics that qualify a benchmark run.
+
+Two kinds of number come from here: the environment fingerprint written into
+every dataset header, and memory samples taken while a run is in flight. It
+reads /proc and psutil, nothing else. It does not time inference, and what it
+reports is what the kernel says, so RSS figures are resident pages rather than
+private allocations.
+"""
 
 from __future__ import annotations
 
@@ -34,7 +41,11 @@ class MemorySnapshot:
 
 
 class MemoryTracker:
-    """Track process memory during a benchmark run.
+    """Track the benchmark client's own memory during a run.
+
+    This watches the process running the benchmark, which is useful for sizing
+    the harness and misleading for sizing a model: the weights live in the
+    backend. Use :class:`ServerMemoryTracker` for that.
 
     Usage:
         tracker = MemoryTracker()
@@ -48,7 +59,8 @@ class MemoryTracker:
         self._peak_rss_mib: float = 0.0
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._interval: float = 0.5  # poll every 500ms
+        # 500 ms: long enough to cost nothing, short enough to catch a load spike.
+        self._interval: float = 0.5
 
     def _poll(self) -> None:
         """Continuously sample RSS until stopped."""
@@ -63,6 +75,9 @@ class MemoryTracker:
                 if rss_mib > self._peak_rss_mib:
                     self._peak_rss_mib = rss_mib
             except Exception:
+                # A failing sample must not kill a run that is already measuring:
+                # psutil raises on conditions that come and go, and one missed
+                # tick costs less than the whole run.
                 pass
             self._stop_event.wait(self._interval)
 
@@ -120,11 +135,6 @@ def get_system_info() -> dict[str, str | int | float]:
         pass
 
     return info
-
-
-# --------------------------------------------------------------------------- #
-# Environment fingerprint
-# --------------------------------------------------------------------------- #
 
 
 def read_cpu_model() -> str:
@@ -209,18 +219,13 @@ def get_environment(ollama_version: str | None = None) -> Environment:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Server-side memory sampling
-# --------------------------------------------------------------------------- #
-
-
 def _read_vm_rss_mib(pid: int) -> float | None:
     """Read current RSS of a process from /proc/<pid>/status."""
     try:
         with open(f"/proc/{pid}/status", encoding="utf-8") as handle:
             for line in handle:
                 if line.startswith("VmRSS:"):
-                    kib = float(line.split()[1])
+                    kib = float(line.split()[1])  # the kernel reports KiB here
                     return kib / 1024.0
     except (OSError, ValueError, IndexError):
         return None
@@ -262,7 +267,7 @@ class ServerMemoryTracker:
     ``MemoryTracker`` watches the client process, which is useless for
     inference: the weights live in the backend process (the Ollama daemon).
     This tracker follows the server PID instead, so the reported figure is the
-    memory the model actually occupies — weights plus KV cache.
+    memory the model actually occupies: weights plus KV cache.
 
     Usage:
         tracker = ServerMemoryTracker(pid)
@@ -322,6 +327,8 @@ class ServerMemoryTracker:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=2.0)
+        # One last read after the thread is gone: the final poll can sit up to
+        # one interval behind a load or unload that happened at the tail end.
         current = sum(_read_vm_rss_mib(pid) or 0.0 for pid in self._pids())
         if current > self._peak_mib:
             self._peak_mib = current
